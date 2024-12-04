@@ -1,0 +1,181 @@
+import tkinter as tk
+from tkinter import messagebox
+from netmiko import ConnectHandler
+import time
+
+# Function to handle device login
+def login():
+    global connection, hostname_label
+    ip = ip_entry.get()
+    username = username_entry.get()
+    password = password_entry.get()
+    enable_password = enable_password_entry.get()
+    
+    device = {
+        "device_type": "cisco_ios",
+        "host": ip,
+        "username": username,
+        "password": password,
+        "secret": enable_password,
+        "timeout": 60,
+    }
+
+    try:
+        connection = ConnectHandler(**device)
+        connection.enable()
+        messagebox.showinfo("Success", "Login successful to " + ip)
+        login_frame.grid_forget()  # Hide the login frame
+        action_frame.grid(row=1, column=0, padx=10, pady=10)  # Show the action frame
+    except Exception as e:
+        messagebox.showerror("Login Error", f"Failed to login: {e}")
+
+# Function to configure ACLs
+def configure_acl():
+    if not connection:
+        messagebox.showwarning("Warning", "You must login first.")
+        return
+    try:
+        acl_commands = [
+            "ip access-list extended TEST_ACL",
+            "permit tcp any any eq 80",
+            "permit tcp any any eq 443",
+            "deny ip any any"
+        ]
+        connection.send_config_set(acl_commands)
+        time.sleep(2)
+        messagebox.showinfo("Success", "ACL configured successfully.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to configure ACL: {e}")
+
+# Function to configure IPSec
+def configure_ipsec():
+    if not connection:
+        messagebox.showwarning("Warning", "You must login first.")
+        return
+    try:
+        ipsec_commands = [
+            "crypto isakmp policy 10",
+            "encryption aes",
+            "hash sha256",
+            "authentication pre-share",
+            "group 14",
+            "crypto ipsec transform-set MYSET esp-aes esp-sha-hmac",
+            "crypto map mymap 10 ipsec-isakmp"
+        ]
+        connection.send_config_set(ipsec_commands)
+        time.sleep(2)
+        messagebox.showinfo("Success", "IPSec configured successfully.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to configure IPSec: {e}")
+
+# Function to configure syslog
+def configure_syslog():
+    if not connection:
+        messagebox.showwarning("Warning", "You must login first.")
+        return
+    try:
+        syslog_commands = [
+            "logging buffered 20000",
+            "logging console warnings"
+        ]
+        connection.send_config_set(syslog_commands)
+        time.sleep(2)
+        messagebox.showinfo("Success", "Syslog configured successfully.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to configure syslog: {e}")
+
+# Function to change the hostname
+def change_hostname():
+    if not connection:
+        messagebox.showwarning("Warning", "You must login first.")
+        return
+
+    def apply_hostname_change():
+        global hostname_label
+        new_hostname = hostname_entry.get()
+        if not new_hostname:
+            messagebox.showwarning("Warning", "Please enter a hostname.")
+            return
+        try:
+            connection.send_config_set([f"hostname {new_hostname}"])
+            hostname_label.config(text=f"Hostname: {new_hostname}")  # Update the top label
+            messagebox.showinfo("Success", f"Hostname changed to {new_hostname}")
+            hostname_window.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to change hostname: {e}")
+
+    hostname_window = tk.Toplevel(root)
+    hostname_window.title("Change Hostname")
+    tk.Label(hostname_window, text="New Hostname:").grid(row=0, column=0, pady=5)
+    hostname_entry = tk.Entry(hostname_window)
+    hostname_entry.grid(row=0, column=1, pady=5)
+    tk.Button(hostname_window, text="Apply", command=apply_hostname_change).grid(row=1, column=0, columnspan=2, pady=10)
+
+# Function to check configuration
+def check_configuration():
+    if not connection:
+        messagebox.showwarning("Warning", "You must login first.")
+        return
+    try:
+        running_config = connection.send_command("show running-config")
+        recommended_settings = [
+            "no ip http server",
+            "service password-encryption",
+            "login block-for 120 attempts 3 within 60"
+        ]
+        passed = [setting for setting in recommended_settings if setting in running_config]
+        missing = [setting for setting in recommended_settings if setting not in running_config]
+        result = f"--- Passed Configurations ---\n" + "\n".join(passed) + \
+                 f"\n\n--- Missing Configurations ---\n" + "\n".join(missing)
+        messagebox.showinfo("Configuration Check", result)
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to check configuration: {e}")
+
+# Setting up the GUI
+root = tk.Tk()
+root.title("Network Management Tool")
+root.geometry("400x300")
+root.resizable(False, False)
+
+connection = None  # Global connection variable
+
+# Top label for hostname
+hostname_label = tk.Label(root, text="Hostname: Not Set", font=("Arial", 12), pady=5)
+hostname_label.grid(row=0, column=0)
+
+# Login section
+login_frame = tk.Frame(root, padx=20, pady=20)
+login_frame.grid(row=1, column=0, padx=10, pady=10)
+
+tk.Label(login_frame, text="Device IP Address:").grid(row=0, column=0, sticky="w")
+ip_entry = tk.Entry(login_frame)
+ip_entry.grid(row=0, column=1, pady=5)
+
+tk.Label(login_frame, text="Username:").grid(row=1, column=0, sticky="w")
+username_entry = tk.Entry(login_frame)
+username_entry.grid(row=1, column=1, pady=5)
+
+tk.Label(login_frame, text="Password:").grid(row=2, column=0, sticky="w")
+password_entry = tk.Entry(login_frame, show="*")
+password_entry.grid(row=2, column=1, pady=5)
+
+tk.Label(login_frame, text="Enable Password:").grid(row=3, column=0, sticky="w")
+enable_password_entry = tk.Entry(login_frame, show="*")
+enable_password_entry.grid(row=3, column=1, pady=5)
+
+tk.Button(login_frame, text="Login", command=login).grid(row=4, column=0, columnspan=2, pady=10)
+
+# Action section (hidden until login)
+action_frame = tk.Frame(root, padx=20, pady=20)
+
+tk.Button(action_frame, text="Configure ACL", width=25, command=configure_acl).grid(row=0, column=0, pady=5)
+tk.Button(action_frame, text="Configure IPSec", width=25, command=configure_ipsec).grid(row=1, column=0, pady=5)
+tk.Button(action_frame, text="Configure Syslog", width=25, command=configure_syslog).grid(row=2, column=0, pady=5)
+tk.Button(action_frame, text="Change Hostname", width=25, command=change_hostname).grid(row=3, column=0, pady=5)
+tk.Button(action_frame, text="Check Configuration", width=25, command=check_configuration).grid(row=4, column=0, pady=5)
+
+# Label at bottom left
+footer_label = tk.Label(root, text="If failed, press button again", font=("Arial", 8), fg="gray")
+footer_label.grid(row=2, column=0, sticky="w", padx=10, pady=5)
+
+root.mainloop()
